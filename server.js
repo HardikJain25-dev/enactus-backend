@@ -10,7 +10,9 @@ const TeamMember = require('./models/TeamMember');
 const downloadImage = require('./download');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "*",
+}));
 app.use(express.json());
 
 // Serve uploaded files statically
