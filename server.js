@@ -198,7 +198,8 @@ mongoose.connect(process.env.MONGODB_URI, {
   useUnifiedTopology: true,
 });
 
-app.listen(3001, () => {
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
   console.clear();
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
