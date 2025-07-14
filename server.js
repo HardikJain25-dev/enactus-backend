@@ -68,13 +68,7 @@ app.post('/api/team', async (req, res) => {
 // Get all team members
 app.get('/api/team', async (req, res) => {
   const members = await TeamMember.find();
-  const updatedMembers = members.map(member => {
-    if (member.image && !member.image.startsWith('http')) {
-      member.image = `${req.protocol}://${req.get('host')}/uploads/${member.image}`;
-    }
-    return member;
-  });
-  res.json(updatedMembers);
+  res.json(members);
 });
 
 // Update team member by name
