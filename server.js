@@ -163,29 +163,36 @@ app.post("/api/team/import-sheet", async (req, res) => {
         continue;
       }
 
-      const exists = await TeamMember.findOne({ name: row.name });
-      if (exists) {
-        console.warn("Skipping duplicate member:", row.name);
-        continue;
-      }
-
       let socials = [];
       try {
         socials = JSON.parse(row.socials || "[]");
-      } catch {}
-      
-      const rawImage = row.image?.trim();
-      const localImagePath = rawImage ? await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`) : "";
+      } catch (err) {
+        console.warn(`Invalid socials JSON for ${row.name}:`, row.socials);
+        socials = [];
+      }
 
-      await TeamMember.create({
-        name: row.name,
-        role: row.role,
-        image: localImagePath,
-        description: row.description,
-        collegeRollNumber: row.collegeRollNumber,
-        year: row.year,
-        socials,
-      });
+      const rawImage = row.image?.trim();
+      let localImagePath = "";
+      if (rawImage) {
+        try {
+          localImagePath = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
+        } catch (err) {
+          console.warn(`Failed to download image for ${row.name}:`, err.message);
+        }
+      }
+
+      await TeamMember.findOneAndUpdate(
+        { name: row.name },
+        {
+          role: row.role,
+          image: localImagePath,
+          description: row.description,
+          collegeRollNumber: row.collegeRollNumber,
+          year: row.year,
+          socials,
+        },
+        { upsert: true, new: true }
+      );
     }
     res.json({ success: true, count: rows.length });
   } catch (err) {
