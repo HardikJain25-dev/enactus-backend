@@ -211,6 +211,10 @@ app.post("/api/team/import-sheet", async (req, res) => {
   }
 });
 
+app.get('/', (req, res) => {
+  res.send("✅ Enactus backend is running!");
+});
+
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
