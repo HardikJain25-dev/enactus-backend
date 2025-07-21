@@ -160,42 +160,50 @@ app.post("/api/team/import-sheet", async (req, res) => {
     const csvText = await response.text();
     const rows = await csv().fromString(csvText);
 
-    for (const row of rows) {
-      if (!row.name || row.name.trim() === "") {
-        console.warn("Skipping row with missing name:", row);
-        continue;
-      }
+    for (const [index, row] of rows.entries()) {
+      console.log(`[${index + 1}/${rows.length}] Importing: ${row.name}`);
 
-      let socials = [];
       try {
-        socials = JSON.parse(row.socials || "[]");
-      } catch (err) {
-        console.warn(`Invalid socials JSON for ${row.name}:`, row.socials);
-        socials = [];
-      }
-
-      const rawImage = row.image?.trim();
-      let localImagePath = "";
-      if (rawImage) {
-        try {
-          localImagePath = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
-        } catch (err) {
-          console.warn(`Failed to download image for ${row.name}:`, err.message);
+        if (!row.name || row.name.trim() === "") {
+          console.warn(`Skipping row with missing name at index ${index}`);
+          continue;
         }
-      }
 
-      await TeamMember.findOneAndUpdate(
-        { name: row.name },
-        {
-          role: row.role,
-          image: localImagePath,
-          description: row.description,
-          collegeRollNumber: row.collegeRollNumber,
-          year: row.year,
-          socials,
-        },
-        { upsert: true, new: true }
-      );
+        let socials = [];
+        try {
+          socials = JSON.parse(row.socials || "[]");
+        } catch (err) {
+          console.warn(`Invalid socials JSON for ${row.name}:`, row.socials);
+          socials = [];
+        }
+
+        const rawImage = row.image?.trim();
+        let localImagePath = "";
+        if (rawImage) {
+          try {
+            localImagePath = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
+          } catch (err) {
+            console.warn(`Failed to download image for ${row.name}:`, err.message);
+          }
+        }
+
+        await TeamMember.findOneAndUpdate(
+          { name: row.name },
+          {
+            role: row.role,
+            image: localImagePath,
+            description: row.description,
+            collegeRollNumber: row.collegeRollNumber,
+            year: row.year,
+            socials,
+          },
+          { upsert: true, new: true }
+        );
+
+        await new Promise((res) => setTimeout(res, 200)); // Delay to reduce CPU load
+      } catch (err) {
+        console.error(`❌ Error importing ${row.name}:`, err.message);
+      }
     }
     res.json({ success: true, count: rows.length });
   } catch (err) {
