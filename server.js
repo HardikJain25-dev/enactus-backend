@@ -8,6 +8,16 @@ const path = require('path');
 const csv = require("csvtojson");
 const TeamMember = require('./models/TeamMember');
 const Meeting = require('./models/Meeting');  // Added Meeting model
+
+// Cloudinary setup
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_API_KEY,
+  api_secret: process.env.CLOUD_API_SECRET,
+});
+
 const downloadImage = require('./download');
 
 const app = express();
@@ -17,29 +27,26 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Multer memory storage for direct Cloudinary upload
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');  // Save to 'uploads' folder
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
-const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
-
-// Upload endpoint
-app.post('/api/upload', upload.single('file'), (req, res) => {
+// Upload endpoint using Cloudinary
+app.post('/api/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  // Return URL to access uploaded file
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  res.json({ url: fileUrl });
+  try {
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { resource_type: 'image', folder: 'enactus', format: 'webp', overwrite: true },
+        (error, uploadResult) => (error ? reject(error) : resolve(uploadResult))
+      ).end(req.file.buffer);
+    });
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    console.error('❌ Cloudinary upload failed:', err);
+    res.status(500).json({ error: 'Failed to upload image to Cloudinary' });
+  }
 });
 
 // Normalize Google Drive URLs to direct download links
@@ -98,10 +105,13 @@ app.delete('/api/team/:name', async (req, res) => {
       return res.status(404).json({ success: false, message: "Team member not found." });
     }
     if (deleted.image) {
-      const imagePath = path.join(__dirname, 'uploads', path.basename(deleted.image));
-      fs.unlink(imagePath, (err) => {
-        if (err) console.warn("Failed to delete image:", imagePath);
-      });
+      try {
+        const publicId = deleted.image.split('/').slice(-1)[0].replace('.webp', '');
+        await cloudinary.uploader.destroy(`enactus/${publicId}`);
+        console.log(`🗑️ Deleted image from Cloudinary: ${publicId}`);
+      } catch (err) {
+        console.warn("Failed to delete image from Cloudinary:", err.message);
+      }
     }
     res.json({ success: true, message: "Team member deleted." });
   } catch (err) {
@@ -112,17 +122,16 @@ app.delete('/api/team/:name', async (req, res) => {
 app.delete('/api/team', async (req, res) => {
   try {
     await TeamMember.deleteMany({});
-    // Remove all uploaded files from uploads/
-    const uploadDir = path.join(__dirname, 'uploads');
-    fs.readdir(uploadDir, (err, files) => {
-      if (!err) {
-        for (const file of files) {
-          fs.unlink(path.join(uploadDir, file), (err) => {
-            if (err) console.warn("Failed to delete file:", file);
-          });
-        }
+    // Optionally remove all images from Cloudinary in the 'enactus' folder
+    try {
+      const { resources } = await cloudinary.api.resources({ type: 'upload', prefix: 'enactus/' });
+      for (const resource of resources) {
+        await cloudinary.uploader.destroy(resource.public_id);
+        console.log(`🗑️ Deleted ${resource.public_id} from Cloudinary.`);
       }
-    });
+    } catch (err) {
+      console.warn("Failed to bulk delete images from Cloudinary:", err.message);
+    }
     res.json({ success: true, message: "All team members deleted." });
   } catch (err) {
     res.status(500).json({ success: false, message: "Error deleting team members." });
@@ -173,12 +182,32 @@ app.post("/api/team/import-sheet", async (req, res) => {
       }
 
       const rawImage = row.image?.trim();
-      let localImagePath = "";
+      let uploadedImageUrl = "";
       if (rawImage) {
         try {
-          localImagePath = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
+          const imageBuffer = await (async () => {
+            const imagePathOrUrl = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
+            if (!imagePathOrUrl) return null;
+            const response = await fetch(
+              imagePathOrUrl.startsWith("http")
+                ? imagePathOrUrl
+                : `${req.protocol}://${req.get("host")}${imagePathOrUrl}`
+            );
+            return await response.buffer();
+          })();
+
+          if (imageBuffer) {
+            const safeName = row.name.replace(/\s+/g, "_");
+            const uploadResult = await new Promise((resolve, reject) => {
+              cloudinary.uploader.upload_stream(
+                { resource_type: "image", folder: "enactus", public_id: safeName, format: "webp", overwrite: true },
+                (error, result) => (error ? reject(error) : resolve(result))
+              ).end(imageBuffer);
+            });
+            uploadedImageUrl = uploadResult.secure_url;
+          }
         } catch (err) {
-          console.warn(`Failed to download image for ${row.name}:`, err.message);
+          console.warn(`Failed to upload image for ${row.name}:`, err.message);
         }
       }
 
@@ -186,7 +215,7 @@ app.post("/api/team/import-sheet", async (req, res) => {
         { name: row.name },
         {
           role: row.role,
-          image: localImagePath,
+          image: uploadedImageUrl,
           description: row.description,
           collegeRollNumber: row.collegeRollNumber,
           year: row.year,

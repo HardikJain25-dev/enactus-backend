@@ -1,8 +1,13 @@
-const fs = require("fs");
-const path = require("path");
 const fetch = require("node-fetch");
 const sharp = require("sharp");
 const heicConvert = require("heic-convert");
+const cloudinary = require("cloudinary").v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_API_KEY,
+  api_secret: process.env.CLOUD_API_SECRET,
+});
 
 async function downloadImage(driveUrl, filename = "image.jpg") {
   if (!driveUrl || typeof driveUrl !== "string") return "";
@@ -24,33 +29,31 @@ async function downloadImage(driveUrl, filename = "image.jpg") {
     }
 
     const buffer = await response.buffer();
-
     let imageBuffer = buffer;
 
-    // Convert HEIC to JPEG before webp
+    // Convert HEIC to JPEG before WebP
     if (filename.toLowerCase().endsWith(".heic")) {
       try {
-        imageBuffer = await heicConvert({
-          buffer,
-          format: "JPEG",
-          quality: 1
-        });
+        imageBuffer = await heicConvert({ buffer, format: "JPEG", quality: 1 });
       } catch (err) {
         console.warn("⚠️ HEIC conversion failed, using original buffer.");
       }
     }
 
-    const parsed = path.parse(filename);
-    const safeName = parsed.name.replace(/\s+/g, "_");
-    const webpFilename = `${safeName}.webp`;
-    const destPath = path.join(__dirname, "uploads", webpFilename);
+    // Convert to WebP
+    const webpBuffer = await sharp(imageBuffer).sharpen().webp({ quality: 80 }).toBuffer();
 
-    await sharp(imageBuffer)
-      .sharpen()
-      .webp({ quality: 80 })
-      .toFile(destPath);
+    // Upload to Cloudinary
+    const safeName = filename.replace(/\s+/g, "_").replace(/\.[^/.]+$/, "");
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { resource_type: "image", public_id: safeName, format: "webp", overwrite: true },
+        (err, result) => (err ? reject(err) : resolve(result))
+      ).end(webpBuffer);
+    });
 
-    return `/uploads/${webpFilename}`;
+    console.log(`✅ Uploaded ${filename} to Cloudinary: ${uploadResult.secure_url}`);
+    return uploadResult.secure_url; // Return Cloudinary URL
   } catch (err) {
     console.error("Download error:", err.message);
     return "";
