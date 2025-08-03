@@ -7,11 +7,7 @@ const TeamMemberSchema = new mongoose.Schema({
   role: String,
   image: {
     type: String,
-    required: false,
-    set: function (url) {
-      const match = url?.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
-      return match ? `https://drive.google.com/uc?export=view&id=${match[1]}` : url;
-    },
+    required: false, // Now stores direct Cloudinary URL
   },
   description: String,
   socials: [

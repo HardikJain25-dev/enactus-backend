@@ -1,15 +1,7 @@
 const fetch = require("node-fetch");
-const sharp = require("sharp");
-const heicConvert = require("heic-convert");
 const cloudinary = require("cloudinary").v2;
 
-cloudinary.config({
-  cloud_name: process.env.CLOUD_NAME,
-  api_key: process.env.CLOUD_API_KEY,
-  api_secret: process.env.CLOUD_API_SECRET,
-});
-
-async function downloadImage(driveUrl, filename = "image.jpg") {
+async function downloadImage(driveUrl, filename = "image") {
   if (!driveUrl || typeof driveUrl !== "string") return "";
 
   const match = driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -24,38 +16,24 @@ async function downloadImage(driveUrl, filename = "image.jpg") {
   try {
     const response = await fetch(directUrl);
     if (!response.ok) {
-      console.warn(`❌ Failed to download ${filename}, status: ${response.status}`);
+      console.warn(`❌ Failed to fetch ${filename}: ${response.status}`);
       return "";
     }
 
     const buffer = await response.buffer();
-    let imageBuffer = buffer;
+    const safeName = filename.replace(/\s+/g, "_");
 
-    // Convert HEIC to JPEG before WebP
-    if (filename.toLowerCase().endsWith(".heic")) {
-      try {
-        imageBuffer = await heicConvert({ buffer, format: "JPEG", quality: 1 });
-      } catch (err) {
-        console.warn("⚠️ HEIC conversion failed, using original buffer.");
-      }
-    }
-
-    // Convert to WebP
-    const webpBuffer = await sharp(imageBuffer).sharpen().webp({ quality: 80 }).toBuffer();
-
-    // Upload to Cloudinary
-    const safeName = filename.replace(/\s+/g, "_").replace(/\.[^/.]+$/, "");
+    // Directly upload to Cloudinary
     const uploadResult = await new Promise((resolve, reject) => {
       cloudinary.uploader.upload_stream(
-        { resource_type: "image", public_id: safeName, format: "webp", overwrite: true },
-        (err, result) => (err ? reject(err) : resolve(result))
-      ).end(webpBuffer);
+        { folder: "enactus", public_id: safeName, format: "webp", overwrite: true },
+        (error, result) => (error ? reject(error) : resolve(result))
+      ).end(buffer);
     });
 
-    console.log(`✅ Uploaded ${filename} to Cloudinary: ${uploadResult.secure_url}`);
-    return uploadResult.secure_url; // Return Cloudinary URL
+    return uploadResult.secure_url;
   } catch (err) {
-    console.error("Download error:", err.message);
+    console.error("❌ Error downloading/uploading image:", err.message);
     return "";
   }
 }

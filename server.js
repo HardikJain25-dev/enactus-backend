@@ -60,7 +60,10 @@ function normalizeDriveUrl(url) {
 
 // Team Member APIs
 app.post('/api/team', async (req, res) => {
-  req.body.image = normalizeDriveUrl(req.body.image);
+  // Only normalize if it's a Google Drive URL, otherwise keep Cloudinary URL as is
+  if (req.body.image?.includes("drive.google.com")) {
+    req.body.image = normalizeDriveUrl(req.body.image);
+  }
   console.log(`📥 Adding or updating member: ${req.body.name}`);
   try {
     const existing = await TeamMember.findOne({ name: req.body.name });
@@ -183,26 +186,20 @@ app.post("/api/team/import-sheet", async (req, res) => {
 
       const rawImage = row.image?.trim();
       let uploadedImageUrl = "";
-      if (rawImage) {
+      if (rawImage && rawImage.includes("drive.google.com")) {
         try {
-          const imageBuffer = await (async () => {
-            const imagePathOrUrl = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
-            if (!imagePathOrUrl) return null;
-            const response = await fetch(
-              imagePathOrUrl.startsWith("http")
-                ? imagePathOrUrl
-                : `${req.protocol}://${req.get("host")}${imagePathOrUrl}`
-            );
-            return await response.buffer();
-          })();
+          const match = rawImage.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (match) {
+            const directUrl = `https://drive.google.com/uc?export=download&id=${match[1]}`;
+            const driveResp = await fetch(directUrl);
+            const buffer = await driveResp.buffer();
 
-          if (imageBuffer) {
             const safeName = row.name.replace(/\s+/g, "_");
             const uploadResult = await new Promise((resolve, reject) => {
               cloudinary.uploader.upload_stream(
                 { resource_type: "image", folder: "enactus", public_id: safeName, format: "webp", overwrite: true },
                 (error, result) => (error ? reject(error) : resolve(result))
-              ).end(imageBuffer);
+              ).end(buffer);
             });
             uploadedImageUrl = uploadResult.secure_url;
           }
