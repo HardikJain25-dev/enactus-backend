@@ -192,7 +192,7 @@ app.post("/api/team/import-sheet", async (req, res) => {
           if (match) {
             const directUrl = `https://drive.google.com/uc?export=download&id=${match[1]}`;
             const driveResp = await fetch(directUrl);
-            const buffer = await driveResp.buffer();
+            const buffer = Buffer.from(await driveResp.arrayBuffer());
 
             const safeName = row.name.replace(/\s+/g, "_");
             const uploadResult = await new Promise((resolve, reject) => {
@@ -201,6 +201,7 @@ app.post("/api/team/import-sheet", async (req, res) => {
                 (error, result) => (error ? reject(error) : resolve(result))
               ).end(buffer);
             });
+            console.log(`✅ Uploaded image for ${row.name} to Cloudinary: ${uploadResult.secure_url}`);
             uploadedImageUrl = uploadResult.secure_url;
           }
         } catch (err) {
