@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const csv = require("csvtojson");
 const TeamMember = require('./models/TeamMember');
+const Meeting = require('./models/Meeting');  // Added Meeting model
 const downloadImage = require('./download');
 
 const app = express();
@@ -22,7 +23,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Multer setup for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Save to 'uploads' folder
+    cb(null, 'uploads/');  // Save to 'uploads' folder
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -36,12 +37,12 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  // Return the URL to access the uploaded file
+  // Return URL to access uploaded file
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
   res.json({ url: fileUrl });
 });
 
-// Helper to normalize Google Drive URLs to direct image links
+// Normalize Google Drive URLs to direct download links
 function normalizeDriveUrl(url) {
   const match = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (match) {
@@ -50,16 +51,16 @@ function normalizeDriveUrl(url) {
   return url;
 }
 
-// Add or update a team member by name (no duplicates)
+// Team Member APIs
 app.post('/api/team', async (req, res) => {
   req.body.image = normalizeDriveUrl(req.body.image);
+  console.log(`📥 Adding or updating member: ${req.body.name}`);
   try {
     const existing = await TeamMember.findOne({ name: req.body.name });
     if (existing) {
       const updated = await TeamMember.findOneAndUpdate({ name: req.body.name }, req.body, { new: true });
       return res.status(200).json(updated);
     }
-
     const member = new TeamMember(req.body);
     await member.save();
     res.status(201).json(member);
@@ -68,19 +69,16 @@ app.post('/api/team', async (req, res) => {
   }
 });
 
-// Get all team members
 app.get('/api/team', async (req, res) => {
   const members = await TeamMember.find();
   res.json(members);
 });
 
-// Update team member by name
 app.put('/api/team/update-by-name', async (req, res) => {
   const { name, ...updates } = req.body;
   if (!name) {
-    return res.status(400).json({ success: false, message: "Name is required to identify the team member." });
+    return res.status(400).json({ success: false, message: "Name is required." });
   }
-
   try {
     const updated = await TeamMember.findOneAndUpdate({ name }, updates, { new: true });
     if (!updated) {
@@ -92,7 +90,6 @@ app.put('/api/team/update-by-name', async (req, res) => {
   }
 });
 
-// Delete a specific team member by name
 app.delete('/api/team/:name', async (req, res) => {
   const name = req.params.name;
   try {
@@ -112,17 +109,16 @@ app.delete('/api/team/:name', async (req, res) => {
   }
 });
 
-// Delete all team members
 app.delete('/api/team', async (req, res) => {
   try {
     await TeamMember.deleteMany({});
-    // Remove all uploaded files from uploads/ folder
+    // Remove all uploaded files from uploads/
     const uploadDir = path.join(__dirname, 'uploads');
     fs.readdir(uploadDir, (err, files) => {
       if (!err) {
         for (const file of files) {
           fs.unlink(path.join(uploadDir, file), (err) => {
-            if (err) console.warn("Failed to delete image:", file);
+            if (err) console.warn("Failed to delete file:", file);
           });
         }
       }
@@ -133,7 +129,7 @@ app.delete('/api/team', async (req, res) => {
   }
 });
 
-// Login endpoint
+// Login API
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body;
   if (
@@ -145,7 +141,7 @@ app.post('/api/login', (req, res) => {
   res.status(401).json({ success: false, message: "Invalid credentials" });
 });
 
-// Import team members from a CSV file
+// Import from Google Sheet CSV
 app.post("/api/team/import-sheet", async (req, res) => {
   const { sheetUrl } = req.body;
   try {
@@ -163,47 +159,43 @@ app.post("/api/team/import-sheet", async (req, res) => {
     for (const [index, row] of rows.entries()) {
       console.log(`[${index + 1}/${rows.length}] Importing: ${row.name}`);
 
-      try {
-        if (!row.name || row.name.trim() === "") {
-          console.warn(`Skipping row with missing name at index ${index}`);
-          continue;
-        }
-
-        let socials = [];
-        try {
-          socials = JSON.parse(row.socials || "[]");
-        } catch (err) {
-          console.warn(`Invalid socials JSON for ${row.name}:`, row.socials);
-          socials = [];
-        }
-
-        const rawImage = row.image?.trim();
-        let localImagePath = "";
-        if (rawImage) {
-          try {
-            localImagePath = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
-          } catch (err) {
-            console.warn(`Failed to download image for ${row.name}:`, err.message);
-          }
-        }
-
-        await TeamMember.findOneAndUpdate(
-          { name: row.name },
-          {
-            role: row.role,
-            image: localImagePath,
-            description: row.description,
-            collegeRollNumber: row.collegeRollNumber,
-            year: row.year,
-            socials,
-          },
-          { upsert: true, new: true }
-        );
-
-        await new Promise((res) => setTimeout(res, 200)); // Delay to reduce CPU load
-      } catch (err) {
-        console.error(`❌ Error importing ${row.name}:`, err.message);
+      if (!row.name || row.name.trim() === "") {
+        console.warn(`Skipping row with missing name at index ${index}`);
+        continue;
       }
+
+      let socials = [];
+      try {
+        socials = JSON.parse(row.socials || "[]");
+      } catch (err) {
+        console.warn(`Invalid socials JSON for ${row.name}:`, row.socials);
+        socials = [];
+      }
+
+      const rawImage = row.image?.trim();
+      let localImagePath = "";
+      if (rawImage) {
+        try {
+          localImagePath = await downloadImage(rawImage, `${row.name.replace(/\s+/g, "_")}.webp`);
+        } catch (err) {
+          console.warn(`Failed to download image for ${row.name}:`, err.message);
+        }
+      }
+
+      await TeamMember.findOneAndUpdate(
+        { name: row.name },
+        {
+          role: row.role,
+          image: localImagePath,
+          description: row.description,
+          collegeRollNumber: row.collegeRollNumber,
+          year: row.year,
+          socials,
+        },
+        { upsert: true, new: true }
+      );
+
+      await new Promise((res) => setTimeout(res, 200)); // Throttle
     }
     res.json({ success: true, count: rows.length });
   } catch (err) {
@@ -211,10 +203,67 @@ app.post("/api/team/import-sheet", async (req, res) => {
   }
 });
 
+// Root health check
 app.get('/', (req, res) => {
   res.send("✅ Enactus backend is running!");
 });
 
+// --- NEW MEETING API ROUTES ---
+
+// Get all meetings (filtered optionally by date)
+app.get('/api/meetings', async (req, res) => {
+  try {
+    const { date } = req.query;
+    const filter = {};
+    if (date) filter.date = date;
+    const meetings = await Meeting.find(filter).sort({ date: 1, time: 1 });
+    res.json(meetings);
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch meetings', error: err.message });
+  }
+});
+
+// Post new meeting
+app.post('/api/meetings', async (req, res) => {
+  try {
+    const meeting = new Meeting(req.body);
+    await meeting.save();
+    res.status(201).json(meeting);
+  } catch (err) {
+    res.status(400).json({ success: false, message: 'Failed to add meeting', error: err.message });
+  }
+});
+
+// Update meeting by ID
+app.put('/api/meetings/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await Meeting.findByIdAndUpdate(id, req.body, { new: true });
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Meeting not found' });
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update meeting', error: err.message });
+  }
+});
+
+// Delete meeting by ID
+app.delete('/api/meetings/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Meeting.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Meeting not found' });
+    }
+    res.json({ success: true, message: 'Meeting deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to delete meeting', error: err.message });
+  }
+});
+
+
+// Connect to MongoDB and start server
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
