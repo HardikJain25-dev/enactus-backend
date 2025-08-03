@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "chalk": "^5.4.1",
+    "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
     "csvtojson": "^2.0.10",
     "dotenv": "^17.0.0",
